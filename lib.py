@@ -205,9 +205,30 @@ def _request(url: str, label: str, method: str, headers: dict, data: Optional[by
         raise ApiError(label, err.code, body) from None
 
 
+def _is_agent_mgmt_path(path: str) -> bool:
+    """Check if path is an agent management endpoint requiring raw API key auth.
+    Agent management: /agents, /agents/{id} (CRUD)
+    Voice Agent session: /token, /v1/token (Bearer)"""
+    # Normalize path
+    p = path.lstrip("/")
+    # Agent management endpoints
+    if p.startswith("agents") and not p.startswith("token"):
+        return True
+    return False
+
+
 def aai(path: str, method: str = "GET", body: Any = None, headers: Optional[dict] = None) -> Any:
+    api_key = os.environ.get("ASSEMBLYAI_API_KEY", "")
+    # Agent management uses raw API key; Voice Agent token/WS uses Bearer
+    if _is_agent_mgmt_path(path):
+        auth_value = api_key
+        auth_scheme = "raw"
+    else:
+        auth_value = f"Bearer {api_key}"
+        auth_scheme = "Bearer"
+
     request_headers = {
-        "Authorization": f"Bearer {os.environ.get('ASSEMBLYAI_API_KEY', '')}",
+        "Authorization": auth_value,
         "Content-Type": "application/json",
         **(headers or {}),
     }
