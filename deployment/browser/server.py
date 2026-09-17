@@ -7,6 +7,7 @@ The API key stays in this process; the page only gets 60-second tokens.
 """
 
 import copy
+import hashlib
 import json
 import os
 import sys
@@ -17,17 +18,40 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1]))
 
 from lib import (ApiError, aai, load_env, publish_agent, read_agent,  # noqa: E402
-                 required, stored_agent_id)
+                 required, stored_agent_id, _agents_api)
+
+
+def _key_fingerprint(key: str) -> str:
+    """Return first 12 hex chars of SHA-256 of the key, or 'MISSING'."""
+    if not key:
+        return "MISSING"
+    return hashlib.sha256(key.encode()).hexdigest()[:12]
 
 
 def resolve_agent() -> dict:
     """A published id means the agent is managed elsewhere, so use it as it is."""
     name = os.environ.get("AGENT", "minimal")
+    agent_id_env = os.environ.get("AGENT_ID", "")
+    agent_id_key_val = os.environ.get(f"AGENT_ID_{name.upper().replace('-', '_')}", "")
     known = stored_agent_id(name)
+    api_base = _agents_api()
+    api_key = os.environ.get("ASSEMBLYAI_API_KEY", "")
+    key_fp = _key_fingerprint(api_key)
+
+    print(f"[diag] AGENT={name}")
+    print(f"[diag] AGENT_ID env={agent_id_env}")
+    print(f"[diag] AGENT_ID_{name.upper().replace('-', '_')} env={agent_id_key_val}")
+    print(f"[diag] stored_agent_id() -> {known}")
+    print(f"[diag] API base={api_base}")
+    print(f"[diag] API key present={'yes' if api_key else 'no'}, fp={key_fp}")
+
     if known:
         try:
+            print(f"[diag] Loading agent via GET {api_base}/agents/{known}")
             agent = aai(f"/agents/{known}")
+            print(f"[diag] Agent load OK: {agent.get('name')}")
         except ApiError as err:
+            print(f"[diag] Agent load FAILED: status={err.status}, body={err.args[0] if err.args else 'unknown'}")
             sys.exit(f"Could not load agent {known}: {err}")
         return {"id": known, "name": agent.get("name") or "Your agent"}
     agent = read_agent(name)
