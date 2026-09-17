@@ -402,6 +402,14 @@ def main() -> int:
         check("dashboard js", s == 200 and "javascript" in ctype
               and "/api/overview" in js, ctype)
 
+        # dashboard: asset paths use /dashboard/ prefix (Render-ready)
+        check("dashboard css path correct",
+              'href="/dashboard/style.css"' in html,
+              "style.css not referenced with /dashboard/ prefix")
+        check("dashboard js path correct",
+              'src="/dashboard/app.js"' in html,
+              "app.js not referenced with /dashboard/ prefix")
+
         # dashboard: read API
         ov = call("GET", "/api/overview")[1]
         check("overview shape",
@@ -492,6 +500,18 @@ def main() -> int:
         check("no hard-coded dates in prompt",
               not _re.search(r"\b20\d{2}\b", _prompt)
               and not any(m in _prompt for m in _months), "clean")
+
+        # Regression: explicit slot selection required before book_facility
+        check("prompt requires explicit slot selection",
+              "explicitly ask the user which single slot" in _prompt
+              and "read the chosen slot back for confirmation" in _prompt
+              and "repeat the available slots and ask again" in _prompt,
+              "missing slot-selection rules")
+        check("prompt never auto-selects first slot",
+              "first slot" not in _prompt.lower()
+              and "auto-select" not in _prompt.lower()
+              and "default" not in _prompt.lower(),
+              "prompt suggests auto-selection")
 
         # acceptance C+D: /time -> tomorrow -> list_slots -> book -> confirm
         _today = _dt.strptime(now["date"], "%Y-%m-%d").date()
