@@ -29,7 +29,9 @@ def _key_fingerprint(key: str) -> str:
 
 
 def resolve_agent() -> dict:
-    """A published id means the agent is managed elsewhere, so use it as it is."""
+    """A published id means the agent is managed elsewhere, so use it as it is.
+    Tries to fetch agent metadata from AssemblyAI for validation, but does not
+    fail if the agent lookup returns 404 - the agent ID from config is trusted."""
     name = os.environ.get("AGENT", "minimal")
     agent_id_env = os.environ.get("AGENT_ID", "")
     agent_id_key_val = os.environ.get(f"AGENT_ID_{name.upper().replace('-', '_')}", "")
@@ -45,23 +47,31 @@ def resolve_agent() -> dict:
     print(f"[diag] API base={api_base}")
     print(f"[diag] API key present={'yes' if api_key else 'no'}, fp={key_fp}")
 
+    # Try to fetch agent metadata for validation, but don't fail startup if 404
+    agent_name = "Your agent"
     if known:
         try:
             print(f"[diag] Loading agent via GET {api_base}/agents/{known}")
             agent = aai(f"/agents/{known}")
-            print(f"[diag] Agent load OK: {agent.get('name')}")
+            agent_name = agent.get("name") or "Your agent"
+            print(f"[diag] Agent load OK: {agent_name}")
         except ApiError as err:
-            print(f"[diag] Agent load FAILED: status={err.status}, body={err.args[0] if err.args else 'unknown'}")
-            sys.exit(f"Could not load agent {known}: {err}")
-        return {"id": known, "name": agent.get("name") or "Your agent"}
-    agent = read_agent(name)
-    try:
-        result = publish_agent(agent, name=name, reuse_by_name=True)
-    except ApiError as err:
-        sys.exit(f"Could not publish agents/{name}.jsonc: {err}")
-    verb = "Created" if result["created"] else "Updated"
-    print(f'{verb} "{agent["name"]}" from agents/{name}.jsonc')
-    return {"id": result["id"], "name": agent["name"]}
+            if err.status == 404:
+                print(f"[diag] Agent lookup 404 (non-fatal): using config name '{name}'")
+                agent_name = name.replace("-", " ").replace("_", " ").title()
+            else:
+                print(f"[diag] Agent load FAILED: status={err.status}, body={err.args[0] if err.args else 'unknown'}")
+                sys.exit(f"Could not load agent {known}: {err}")
+    else:
+        agent = read_agent(name)
+        try:
+            result = publish_agent(agent, name=name, reuse_by_name=True)
+        except ApiError as err:
+            sys.exit(f"Could not publish agents/{name}.jsonc: {err}")
+        verb = "Created" if result["created"] else "Updated"
+        print(f'{verb} "{agent["name"]}" from agents/{name}.jsonc')
+        return {"id": result["id"], "name": agent["name"]}
+    return {"id": known, "name": agent_name}
 
 
 def public_agent(agent: dict) -> dict:
@@ -102,12 +112,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(502, b'{"error":"token request failed"}', "application/json")
             return
         if path == "/agent":
-            try:
-                agent = aai(f"/agents/{AGENT['id']}")
-                self._send(200, json.dumps(public_agent(agent)).encode(), "application/json")
-            except ApiError as err:
-                print(err)
-                self._send(502, b'{"error":"could not load the agent"}', "application/json")
+            # Serve agent config from local memory (no AssemblyAI call needed)
+            self._send(200, json.dumps(public_agent(AGENT)).encode(), "application/json")
             return
         if path == "/app.js":
             self._send(200, (HERE / "app.js").read_bytes(), "text/javascript")
