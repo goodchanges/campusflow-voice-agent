@@ -186,11 +186,23 @@ def _agents_api() -> str:
 
 def _request(url: str, label: str, method: str, headers: dict, data: Optional[bytes]) -> str:
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    # Safe diagnostics: log request details (no secrets)
+    auth_header = headers.get("Authorization", "")
+    auth_scheme = auth_header.split(" ")[0] if auth_header else "NONE"
+    print(f"[diag] {label} -> {method} {url}")
+    print(f"[diag] auth_scheme={auth_scheme}")
+    for h, v in headers.items():
+        if h.lower() != "authorization":
+            print(f"[diag] header {h}={v}")
     try:
         with urllib.request.urlopen(req) as res:
-            return res.read().decode()
+            body = res.read().decode()
+            print(f"[diag] {label} -> HTTP {res.status}")
+            return body
     except urllib.error.HTTPError as err:
-        raise ApiError(label, err.code, err.read().decode()) from None
+        body = err.read().decode()
+        print(f"[diag] {label} -> HTTP {err.code}: {body[:200]}")
+        raise ApiError(label, err.code, body) from None
 
 
 def aai(path: str, method: str = "GET", body: Any = None, headers: Optional[dict] = None) -> Any:
