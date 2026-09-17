@@ -9,6 +9,7 @@ Error envelope is always {"success": False, "error": {"code", "message"}}.
 import re
 import secrets
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 from database import (CATEGORIES, FACILITIES, OWNERS, PRIORITIES,  # noqa: E402
                       TicketTransitionError, audit, immediate,
@@ -16,6 +17,31 @@ from database import (CATEGORIES, FACILITIES, OWNERS, PRIORITIES,  # noqa: E402
                       transition_ticket, utcnow)
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+TIMEZONE_NAME = "Asia/Kolkata"
+
+
+def current_ist() -> datetime:
+    """Runtime clock in Asia/Kolkata. zoneinfo first; India has no daylight
+    saving, so a fixed UTC+5:30 fallback is exact on hosts without tzdata."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo(TIMEZONE_NAME))
+    except Exception:
+        return datetime.now(timezone(timedelta(hours=5, minutes=30), "IST"))
+
+
+def get_time() -> tuple:
+    """Real current date/time for the voice agent. Never hard-coded: the
+    agent must call this instead of guessing dates like 'May 22'."""
+    now = current_ist()
+    return 200, {
+        "timezone": TIMEZONE_NAME,
+        "iso_datetime": now.isoformat(timespec="seconds"),
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M:%S"),
+        "weekday": now.strftime("%A"),
+    }
 
 
 def err(code: str, message: str, status: int = 400) -> tuple:

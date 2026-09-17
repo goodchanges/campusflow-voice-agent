@@ -23,7 +23,8 @@ sys.path.insert(0, str(HERE))
 
 from database import connect, init_db  # noqa: E402
 from handlers import (DATE_RE, book_facility, create_ticket,  # noqa: E402
-                      escalate_ticket, get_ticket_status, list_slots)
+                      escalate_ticket, get_ticket_status, get_time,
+                      list_slots)
 from queries import (escalated_tickets, open_tickets,  # noqa: E402
                      recent_audit, recent_bookings, recent_tickets)
 
@@ -111,6 +112,8 @@ class Handler(BaseHTTPRequestHandler):
                body, conn) -> tuple:
         if method == "GET" and path == "/health":
             return 200, {"ok": True}
+        if method == "GET" and path == "/time":
+            return get_time()
         if method == "GET" and path == "/api/overview":
             return overview(conn, query.get("date", ""))
         if method == "POST" and path == "/tickets":

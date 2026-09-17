@@ -25,6 +25,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(ROOT))
 
 import database  # noqa: E402
 import queries  # noqa: E402
@@ -397,6 +398,75 @@ def main() -> int:
         s, nope = call("GET", "/nope")
         check("unknown route clean", s == 404 and nope["success"] is False
               and "Traceback" not in json.dumps(nope), json.dumps(nope))
+
+        # /time: runtime Asia/Kolkata clock, never hard-coded
+        import re as _re
+        s, now = call("GET", "/time")
+        check("time shape", s == 200
+              and now.get("timezone") == "Asia/Kolkata"
+              and all(k in now for k in ("iso_datetime", "date", "time",
+                                         "weekday")), json.dumps(now))
+        check("time formats",
+              bool(_re.match(r"^\d{4}-\d{2}-\d{2}$", now.get("date", "")))
+              and bool(_re.match(r"^\d{2}:\d{2}:\d{2}$",
+                                 now.get("time", "")))
+              and now.get("weekday") in ("Monday", "Tuesday", "Wednesday",
+                                         "Thursday", "Friday", "Saturday",
+                                         "Sunday"), json.dumps(now))
+        from datetime import datetime as _dt
+        parsed = _dt.strptime(now["date"], "%Y-%m-%d")
+        check("weekday matches date",
+              parsed.strftime("%A") == now["weekday"], json.dumps(now))
+        try:
+            from zoneinfo import ZoneInfo as _ZI
+            _tz = _ZI("Asia/Kolkata")
+        except Exception:
+            from datetime import timedelta as _td, timezone as _tzmod
+            _tz = _tzmod(_td(hours=5, minutes=30))
+        _skew = abs((_dt.now(_tz).replace(tzinfo=None)
+                     - _dt.strptime(now["date"] + " " + now["time"],
+                                    "%Y-%m-%d %H:%M:%S")).total_seconds())
+        check("time is runtime-fresh", _skew < 120, f"skew={_skew:.0f}s")
+
+        # agent config: clock tool wired, prompt forbids guessing, no dates
+        from lib import parse_jsonc as _parse
+        _cfg = _parse((ROOT / "agents" / "campusflow.jsonc").read_text())
+        _tools = {t["name"]: t for t in _cfg.get("tools", [])}
+        _clock = _tools.get("get_current_datetime", {})
+        check("clock tool wired",
+              _clock.get("http", {}).get("http_method") == "GET"
+              and _clock.get("http", {}).get("url", "").endswith("/time")
+              and _clock.get("execution_mode") == "hold", json.dumps(_clock))
+        _prompt = _cfg.get("system_prompt", "") + " " + _cfg.get("greeting",
+                                                                 "")
+        check("prompt demands tool-first dates",
+              "get_current_datetime" in _prompt
+              and "Never guess" in _prompt
+              and "tomorrow" in _prompt, _prompt[:100])
+        _months = ("January", "February", "March", "April", "May", "June",
+                   "July", "August", "September", "October", "November",
+                   "December")
+        check("no hard-coded dates in prompt",
+              not _re.search(r"\b20\d{2}\b", _prompt)
+              and not any(m in _prompt for m in _months), "clean")
+
+        # acceptance C+D: /time -> tomorrow -> list_slots -> book -> confirm
+        _today = _dt.strptime(now["date"], "%Y-%m-%d").date()
+        from datetime import timedelta as _td2
+        _tomorrow = (_today + _td2(days=1)).strftime("%Y-%m-%d")
+        s, _slots = call("GET", "/slots?facility=study room&date="
+                         + _tomorrow)
+        _evening = [x for x in _slots.get("available_slots", [])
+                    if x >= "17:00"] or _slots.get("available_slots", [])
+        check("tomorrow slots listed", s == 200 and len(_evening) >= 1,
+              json.dumps(_slots))
+        s, _booked = call("POST", "/bookings", {
+            "facility": "study room", "date": _tomorrow,
+            "slot": _evening[0], "requester": "TimeTest"})
+        _bk = _booked.get("booking", {})
+        check("booked on derived date", s == 200
+              and _bk.get("date") == _tomorrow
+              and _bk.get("status") == "confirmed", json.dumps(_booked))
 
         # seed reset is deterministic (runs last: it wipes test data)
         seed.seed()
