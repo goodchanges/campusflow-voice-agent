@@ -53,10 +53,24 @@ def _nonempty(value) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+# Placeholder names an agent must never store as reporter/requester. The
+# agent prompt tells it to ask the caller instead; this rejects the exact
+# failure mode where the model invents "Unknown" to fill the field.
+PLACEHOLDER_NAMES = frozenset({
+    "unknown", "guest", "anonymous", "none", "null", "n/a", "na", "tbd",
+    "xxx",
+})
+
+
+def _real_name(value) -> bool:
+    return _nonempty(value) and value.strip().lower() not in PLACEHOLDER_NAMES
+
+
 def create_ticket(conn: sqlite3.Connection, body: dict) -> tuple:
-    if not _nonempty(body.get("reporter")):
+    if not _real_name(body.get("reporter")):
         return err("INVALID_REQUESTER",
-                   "A reporter name is required to log a ticket.", 400)
+                   "A real reporter name is required; ask the caller for"
+                   " it instead of using a placeholder.", 400)
     required = ("category", "location", "description", "priority")
     for field in required:
         if not _nonempty(body.get(field)):
@@ -124,9 +138,10 @@ def list_slots(conn: sqlite3.Connection, facility, date) -> tuple:
 
 
 def book_facility(conn: sqlite3.Connection, body: dict) -> tuple:
-    if not _nonempty(body.get("requester")):
+    if not _real_name(body.get("requester")):
         return err("INVALID_REQUESTER",
-                   "A requester name is required to book a facility.", 400)
+                   "A real requester name is required; ask the caller for"
+                   " it instead of using a placeholder.", 400)
     required = ("facility", "date", "slot")
     for field in required:
         if not _nonempty(body.get(field)):

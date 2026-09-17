@@ -229,6 +229,22 @@ def main() -> int:
         check("empty requester", s == 400 and ir2["error"]["code"]
               == "INVALID_REQUESTER", json.dumps(ir2))
 
+        # placeholder names are rejected, never stored
+        for fake in ("Unknown", "GUEST", "n/a"):
+            s, ph = call("POST", "/tickets", {
+                "reporter": fake, "category": "plumbing", "location": "B",
+                "description": "d", "priority": "P3"})
+            check(f"placeholder reporter {fake!r}", s == 400
+                  and ph["error"]["code"] == "INVALID_REQUESTER",
+                  json.dumps(ph))
+        for fake in ("Unknown", "guest"):
+            s, ph = call("POST", "/bookings", {
+                "facility": "study room", "date": TOMORROW,
+                "slot": "17:00-18:00", "requester": fake})
+            check(f"placeholder requester {fake!r}", s == 400
+                  and ph["error"]["code"] == "INVALID_REQUESTER",
+                  json.dumps(ph))
+
         # nonexistent facility / slot
         s, nf3 = call("POST", "/bookings", {
             "facility": "pool", "date": TOMORROW,
@@ -443,6 +459,9 @@ def main() -> int:
               "get_current_datetime" in _prompt
               and "Never guess" in _prompt
               and "tomorrow" in _prompt, _prompt[:100])
+        check("prompt forbids placeholder names",
+              "placeholder" in _prompt
+              and "Reuse a name already given" in _prompt, _prompt[:100])
         _months = ("January", "February", "March", "April", "May", "June",
                    "July", "August", "September", "October", "November",
                    "December")
