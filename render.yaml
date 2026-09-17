@@ -13,12 +13,12 @@ services:
         sync: false
       # Which agents/<name>.jsonc the service publishes on boot.
       - key: AGENT
-        value: minimal
+        value: campusflow
       # Paste an id from your .env here to serve that exact agent. Left empty,
       # the service publishes AGENT itself and reuses the agent of the same
       # name on later restarts.
       - key: AGENT_ID
-        value: ''
+        value: agent_513be8ee78684d6b8068521aeb409189
 
   # CampusFlow tool backend + ops dashboard (Phase 8). Stdlib only, SQLite
   # on the service disk. Free-tier disks are EPHEMERAL: data resets on
