@@ -97,10 +97,18 @@ def main() -> int:
             print("server did not start")
             return 1
 
-        # 10. deterministic seed data
+        # 10. deterministic seed data: zero synthetic transactions
         s, seeded = call("GET", "/tickets?ticket_id=H-1001")
-        check("seed ticket H-1001", s == 200
-              and seeded["ticket"]["status"] == "in_progress")
+        check("seed has zero tickets", s == 404
+              and seeded["error"]["code"] == "TICKET_NOT_FOUND",
+              json.dumps(seeded))
+        conn = sqlite3.connect(tmp.name)
+        n_slots = conn.execute("SELECT COUNT(*) FROM slots").fetchone()[0]
+        n_taken = conn.execute(
+            "SELECT COUNT(*) FROM slots WHERE is_booked != 0").fetchone()[0]
+        conn.close()
+        check("seed has 84 free slots", n_slots == 84 and n_taken == 0,
+              f"slots={n_slots} taken={n_taken}")
         s, b = call("GET", "/slots?facility=study room&date=" + TOMORROW)
         check("seed leaves all slots free", s == 200
               and b["available_slots"] == ["09:00-10:00", "11:00-12:00",
@@ -113,7 +121,7 @@ def main() -> int:
             "location": "Block B second floor water cooler",
             "description": "Water spreading near stairs", "priority": "P1"})
         t = created.get("ticket", {})
-        check("create_ticket", s == 200 and t.get("ticket_id") == "H-1003"
+        check("create_ticket", s == 200 and t.get("ticket_id") == "H-1001"
               and t.get("status") == "open"
               and t.get("owner") == "plumber on duty"
               and t.get("priority") == "P1"
@@ -121,7 +129,7 @@ def main() -> int:
               json.dumps(created))
 
         # 2. get_ticket_status
-        s, got = call("GET", "/tickets?ticket_id=H-1003")
+        s, got = call("GET", "/tickets?ticket_id=H-1001")
         check("get_ticket_status", s == 200
               and got["ticket"]["status"] == "open"
               and got["ticket"]["owner"] == "plumber on duty",
@@ -156,7 +164,7 @@ def main() -> int:
 
         # 6. escalate_ticket (P1 -> warden)
         s, esc = call("POST", "/tickets/escalate", {
-            "ticket_id": "H-1003", "reason": "water spreading near stairs"})
+            "ticket_id": "H-1001", "reason": "water spreading near stairs"})
         e = esc.get("escalation", {})
         check("escalate_ticket", s == 200
               and e.get("previous_status") == "open"
@@ -165,7 +173,7 @@ def main() -> int:
               and "escalated_at" in e, json.dumps(esc))
 
         # scenario A tail: status reads escalated
-        s, got2 = call("GET", "/tickets?ticket_id=H-1003")
+        s, got2 = call("GET", "/tickets?ticket_id=H-1001")
         check("status after escalate", s == 200
               and got2["ticket"]["status"] == "escalated", json.dumps(got2))
 
@@ -207,13 +215,25 @@ def main() -> int:
               == "facility manager" and "No external notification"
               in p2esc["escalation"]["note"], json.dumps(p2esc))
 
-        # escalate from terminal states is rejected
+        # escalate from terminal states is rejected (ticket built first
+        # through the real creation path, then resolved directly)
+        s, _res = call("POST", "/tickets", {
+            "reporter": "Res", "category": "cleaning", "location": "Block A",
+            "description": "Stained wall", "priority": "P3"})
+        resid = _res["ticket"]["ticket_id"]
+        conn = database.connect()
+        try:
+            database.transition_ticket(conn, resid, "resolved", "test",
+                                       "test")
+            conn.commit()
+        finally:
+            conn.close()
         s, r = call("POST", "/tickets/escalate", {
-            "ticket_id": "H-1002", "reason": "please reopen"})
+            "ticket_id": resid, "reason": "please reopen"})
         check("escalate resolved rejected", s == 400 and r["error"]["code"]
               == "INVALID_INPUT", json.dumps(r))
         s, r2 = call("POST", "/tickets/escalate", {
-            "ticket_id": "H-1003", "reason": "again"})
+            "ticket_id": "H-1001", "reason": "again"})
         check("escalate escalated rejected", s == 400 and r2["error"]["code"]
               == "INVALID_INPUT", json.dumps(r2))
 
@@ -281,12 +301,6 @@ def main() -> int:
         fresh_id = fresh["ticket"]["ticket_id"]
         conn = database.connect()
         try:
-            try:
-                database.transition_ticket(conn, "H-1002", "open", "test",
-                                           "test")
-                check("closed->open rejected", False, "no error raised")
-            except database.TicketTransitionError:
-                check("closed->open rejected", True)
             chain = ["assigned", "in_progress", "resolved", "closed"]
             prev = "open"
             ok = True
@@ -301,13 +315,19 @@ def main() -> int:
                 ok = False
                 print("chain failed:", exc)
             check("valid lifecycle chain", ok and prev == "closed")
+            try:
+                database.transition_ticket(conn, fresh_id, "open", "test",
+                                           "test")
+                check("closed->open rejected", False, "no error raised")
+            except database.TicketTransitionError:
+                check("closed->open rejected", True)
         finally:
             conn.close()
 
         # 9. audit log, per action
         conn = sqlite3.connect(tmp.name)
         tools = [r[0] for r in conn.execute(
-            "SELECT tool FROM audit_log WHERE ref_id IN ('H-1003', 'S-01')"
+            "SELECT tool FROM audit_log WHERE ref_id IN ('H-1001', 'S-01')"
             " ORDER BY id")]
         conn.close()
         check("audit log rows", tools == ["create_ticket", "book_facility",
@@ -350,13 +370,17 @@ def main() -> int:
             conn.rollback()
             conn.close()
 
-        # dashboard-ready reads
+        # dashboard-ready reads (open ticket built via the real path)
+        s, _q = call("POST", "/tickets", {
+            "reporter": "Query", "category": "network", "location": "Block C",
+            "description": "Slow wifi", "priority": "P2"})
+        qid = _q["ticket"]["ticket_id"]
         conn = database.connect()
         try:
             check("find_user", (queries.find_user(conn, "aarav") or {})
                   .get("block") == "Block B")
             check("open_tickets", any(
-                t["ticket_id"] == "H-1001"
+                t["ticket_id"] == qid
                 for t in queries.open_tickets(conn)))
             check("escalated_tickets", any(
                 t["ticket_id"] == p2id
@@ -495,12 +519,16 @@ def main() -> int:
         ids = [r[0] for r in conn.execute(
             "SELECT ticket_id FROM tickets ORDER BY ticket_id")]
         n_b = conn.execute("SELECT COUNT(*) FROM bookings").fetchone()[0]
+        n_slots = conn.execute("SELECT COUNT(*) FROM slots").fetchone()[0]
+        n_taken = conn.execute(
+            "SELECT COUNT(*) FROM slots WHERE is_booked != 0").fetchone()[0]
         n_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         conn.close()
         check("seed reset deterministic",
-              n_t == 2 and ids == ["H-1001", "H-1002"] and n_b == 0
-              and n_users == 4,
-              f"tickets={ids} bookings={n_b} users={n_users}")
+              n_t == 0 and not ids and n_b == 0 and n_slots == 84
+              and n_taken == 0 and n_users == 4,
+              f"tickets={ids} bookings={n_b} slots={n_slots}"
+              f" taken={n_taken} users={n_users}")
     finally:
         server.terminate()
         try:
