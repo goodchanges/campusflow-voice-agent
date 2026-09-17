@@ -1,0 +1,194 @@
+// CampusFlow: campus/hostel operations voice desk.
+//
+// Phase 4: five http tools wired as contracts against the future Python
+// backend at ${CAMPUSFLOW_BASE_URL} (built in Phase 5). AssemblyAI calls
+// these on the agent's behalf, so they work in a browser tab and on a phone
+// call alike. GET arguments become the query string, POST arguments become
+// the JSON body. All five use execution_mode hold so the caller stays with
+// the agent while the backend answers.
+//
+// Contract reference (request/response/error shapes for the Phase 5 backend):
+// - POST /tickets {reporter, category, location, description, priority}
+//   -> {success, ticket:{ticket_id, status, owner, priority, sla_due, created_at}}
+// - GET /tickets?ticket_id=H-#### -> {success, ticket:{ticket_id, status,
+//   owner, priority, updated_at, sla_due}}
+// - GET /slots?facility=&date=YYYY-MM-DD -> {success, facility, date,
+//   available_slots[]}
+// - POST /bookings {facility, date, slot, requester}
+//   -> {success, booking:{booking_id, facility, date, slot, pass_code, status}}
+// - POST /tickets/escalate {ticket_id, reason}
+//   -> {success, escalation:{ticket_id, previous_status, new_status,
+//   escalated_to, escalated_at}} (nested per Phase 5 backend spec)
+// - Errors: {success:false, error:{code, message}}. Codes: INVALID_INPUT,
+//   TICKET_NOT_FOUND, FACILITY_NOT_FOUND, SLOT_UNAVAILABLE, BOOKING_CONFLICT,
+//   INVALID_REQUESTER, INTERNAL_ERROR.
+//
+// Agent files are the request body for POST /v1/agents.
+// https://www.assemblyai.com/docs/voice-agents/voice-agent-api/create-agent
+// PLATFORM CONSTRAINT (found 2026-09-17): at publish time AssemblyAI
+// requires every tools[].http.url to be https AND DNS-resolving. Localhost
+// and placeholder hosts are rejected with 422. So before publishing, set
+// CAMPUSFLOW_BASE_URL in .env to the real public backend URL (Phase 5
+// backend behind https, e.g. the Render deployment or a tunnel) and
+// republish with AGENT=campusflow python publish.py. No file edit needed,
+// the URL is interpolated from the environment.
+// Tools overview:
+// https://www.assemblyai.com/docs/voice-agents/voice-agent-api/tools/overview
+// HTTP tools:
+// https://www.assemblyai.com/docs/voice-agents/voice-agent-api/tools/http-tools
+{
+  // Shown in the AssemblyAI dashboard. Tracked by AGENT_ID_CAMPUSFLOW in
+  // .env, not by this string, so renaming is safe.
+  "name": "CampusFlow ops desk",
+
+  // Who the agent is and how it must speak. Voice-first: short spoken
+  // sentences, no lists, no formatting read aloud.
+  // https://www.assemblyai.com/docs/voice-agents/voice-agent-api/prompting-guide
+  "system_prompt": "You are the CampusFlow ops desk, a calm campus maintenance and facility booking assistant on a voice call. Keep every reply to one or two short sentences. Handle three things: maintenance tickets, facility bookings, and ticket status checks. At the start, collect the requester name, block, and room or location, one question at a time, and remember them for the rest of the call. For maintenance, collect category, exact location, and what is happening, then ask one short clarification if severity is unclear. Categories: plumbing, electrical, hvac, network, cleaning, furniture, other. Priority rules: P1 is urgent safety or major operational failure like spreading water, sparking, power outage, or gas smell. P2 is important but not immediately dangerous, like single-room AC failure or dead Wi-Fi. P3 is routine, like dripping tap or stained wall. Never state a priority as decided unless the details support it. Use your tools for every fact and every action: call create_ticket to log an issue, get_ticket_status to check one, list_slots before offering any booking time, book_facility only for a slot list_slots actually returned and only after the caller confirms it, and escalate_ticket for P1 issues or when the caller asks. Never invent ticket IDs, booking IDs, pass codes, owners, slots, or statuses, and never say an action succeeded unless the tool result confirms it. If a tool returns an error, say what happened in plain words and offer the next option, for example the nearest free slot. Read critical details back for confirmation, like Block B Room 214, and read ticket and booking IDs back digit by digit. Distinguish clearly between I can do that, I am checking, and it has been completed. Offer the next logical step after each task, for example checking status or booking a room. If you do not know something, say so. No exclamation marks.",
+
+  // Voice catalog. anna is used by agents/minimal.jsonc in this repo.
+  // https://www.assemblyai.com/docs/voice-agents/voice-agent-api/voices
+  "voice": { "voice_id": "anna" },
+
+  // Spoken when the call connects. Without it silence reads as a broken line.
+  // https://www.assemblyai.com/docs/voice-agents/voice-agent-api/greeting
+  "greeting": "CampusFlow ops desk. What do you need help with?",
+
+  "input": {
+    // Campus vocabulary the transcriber would otherwise guess at.
+    // https://www.assemblyai.com/docs/voice-agents/voice-agent-api/transcription-prompt
+    "keyterms": [
+      "CampusFlow",
+      "hostel",
+      "warden",
+      "Block A",
+      "Block B",
+      "Block C",
+      "Block D",
+      "study room",
+      "seminar room",
+      "maintenance",
+      "plumbing",
+      "electrical",
+      "HVAC",
+      "AC",
+      "network",
+      "Wi-Fi"
+    ],
+
+    // Natural turn-taking: patient enough for thinkers, interruptible.
+    // Values are the starter defaults made explicit.
+    // https://www.assemblyai.com/docs/voice-agents/voice-agent-api/turn-detection-and-interruptions
+    "turn_detection": {
+      "vad_threshold": 0.5,
+      "min_silence": 1000,
+      "max_silence": 3000,
+      "interrupt_response": true
+    }
+  },
+
+  // Five http tools. AssemblyAI calls each one for the agent; GET arguments
+  // ride in the query string, POST arguments in the JSON body.
+  // https://www.assemblyai.com/docs/voice-agents/voice-agent-api/tools/http-tools
+  "tools": [
+    {
+      "name": "create_ticket",
+      // When to call it, not just what it does. Call once per issue, after
+      // reporter, category, location, description, and priority are known.
+      "description": "Log a campus maintenance issue as a ticket. Call after you have the reporter name, category, exact location, problem description, and priority. Returns the ticket ID, status, owner, and SLA due time.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "reporter": { "type": "string", "description": "Requester full name, as confirmed in the call." },
+          "category": { "type": "string", "description": "Issue category.", "enum": ["plumbing", "electrical", "hvac", "network", "cleaning", "furniture", "other"] },
+          "location": { "type": "string", "description": "Exact location, e.g. Block B Room 214, second floor water cooler." },
+          "description": { "type": "string", "description": "One or two sentences describing what is happening." },
+          "priority": { "type": "string", "description": "P1 urgent safety or major failure, P2 important but not dangerous, P3 routine.", "enum": ["P1", "P2", "P3"] }
+        },
+        "required": ["reporter", "category", "location", "description", "priority"]
+      },
+      // hold keeps the caller with the agent while the backend answers, which
+      // a phone call needs for every consequential action.
+      "execution_mode": "hold",
+      "timeout_seconds": 20,
+      "http": {
+        "url": "${CAMPUSFLOW_BASE_URL}/tickets",
+        "http_method": "POST"
+      }
+    },
+    {
+      "name": "get_ticket_status",
+      "description": "Look up the live status of an existing ticket by its ID, e.g. H-1042. Call whenever the caller asks where their ticket stands. Never guess the status.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ticket_id": { "type": "string", "description": "Ticket ID as spoken by the caller, e.g. H-1042." }
+        },
+        "required": ["ticket_id"]
+      },
+      "execution_mode": "hold",
+      "timeout_seconds": 15,
+      "http": {
+        // Arguments are added to the query string: /tickets?ticket_id=H-1042.
+        "url": "${CAMPUSFLOW_BASE_URL}/tickets",
+        "http_method": "GET"
+      }
+    },
+    {
+      "name": "list_slots",
+      "description": "Check which facility booking slots are actually free on a date. Call before offering any time to the caller, and offer at most two options out loud from what comes back.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "facility": { "type": "string", "description": "Facility name, e.g. study room, seminar room.", "enum": ["study room", "seminar room", "sports hall"] },
+          "date": { "type": "string", "description": "Date as YYYY-MM-DD." }
+        },
+        "required": ["facility", "date"]
+      },
+      "execution_mode": "hold",
+      "timeout_seconds": 15,
+      "http": {
+        "url": "${CAMPUSFLOW_BASE_URL}/slots",
+        "http_method": "GET"
+      }
+    },
+    {
+      "name": "book_facility",
+      "description": "Book a facility slot the caller has chosen and confirmed. Call once, after list_slots returned the slot and the caller picked it. Never book a slot that was not returned.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "facility": { "type": "string", "description": "Facility name, exactly as listed by list_slots.", "enum": ["study room", "seminar room", "sports hall"] },
+          "date": { "type": "string", "description": "Date as YYYY-MM-DD." },
+          "slot": { "type": "string", "description": "Slot start-end exactly as list_slots returned it, e.g. 19:00-20:00." },
+          "requester": { "type": "string", "description": "Requester full name, as confirmed in the call." }
+        },
+        "required": ["facility", "date", "slot", "requester"]
+      },
+      "execution_mode": "hold",
+      "timeout_seconds": 20,
+      "http": {
+        "url": "${CAMPUSFLOW_BASE_URL}/bookings",
+        "http_method": "POST"
+      }
+    },
+    {
+      "name": "escalate_ticket",
+      "description": "Escalate a ticket to the warden or facility manager. Call for P1 urgent issues right after creating the ticket, or whenever the caller asks for escalation. Needs the ticket ID and a short reason.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ticket_id": { "type": "string", "description": "Ticket ID to escalate, e.g. H-1042." },
+          "reason": { "type": "string", "description": "Short reason for escalation, e.g. water spreading near stairs." }
+        },
+        "required": ["ticket_id", "reason"]
+      },
+      "execution_mode": "hold",
+      "timeout_seconds": 20,
+      "http": {
+        "url": "${CAMPUSFLOW_BASE_URL}/tickets/escalate",
+        "http_method": "POST"
+      }
+    }
+  ]
+}

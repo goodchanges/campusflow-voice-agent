@@ -19,3 +19,21 @@ services:
       # name on later restarts.
       - key: AGENT_ID
         value: ''
+
+  # CampusFlow tool backend + ops dashboard (Phase 8). Stdlib only, SQLite
+  # on the service disk. Free-tier disks are EPHEMERAL: data resets on
+  # restart/redeploy, and CAMPUSFLOW_SEED=1 reseeds the deterministic demo
+  # dataset on boot when the tickets table is empty. Existing rows are
+  # never wiped by a restart.
+  - type: web
+    name: campusflow-backend
+    runtime: python
+    plan: free
+    buildCommand: 'true'
+    startCommand: python backend/server.py
+    envVars:
+      - key: CAMPUSFLOW_HOST
+        value: 0.0.0.0
+      - key: CAMPUSFLOW_SEED
+        value: '1'
+      # PORT is set by Render itself; server.py reads it as fallback.

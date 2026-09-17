@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CampusFlow Ops — Live Dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">&#9679;</span>
+    <div>
+      <h1>CampusFlow Ops</h1>
+      <p class="sub">Voice-agent operations monitor &mdash; read only</p>
+    </div>
+  </div>
+  <div class="topstatus">
+    <span id="updated-pill" class="pill" hidden>Updated just now</span>
+    <span id="status-dot" class="dot online" aria-hidden="true"></span>
+    <span id="status-text">Backend Online</span>
+    <span id="clock" class="clock" title="Last successful poll"></span>
+  </div>
+</header>
+
+<div id="offline-banner" class="offline" hidden>
+  Backend Offline &mdash; showing last known data. Retrying&hellip;
+</div>
+
+<main>
+  <section class="cards" aria-label="Summary">
+    <div class="card">
+      <div class="card-label">Open tickets</div>
+      <div class="card-value" id="card-open">&ndash;</div>
+    </div>
+    <div class="card alert">
+      <div class="card-label">Escalated</div>
+      <div class="card-value" id="card-escalated">&ndash;</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Today&rsquo;s bookings</div>
+      <div class="card-value" id="card-bookings">&ndash;</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Free slots today</div>
+      <div class="card-value" id="card-slots">&ndash;</div>
+    </div>
+  </section>
+
+  <section aria-label="Tickets">
+    <h2>Tickets <span id="ticket-count" class="count"></span></h2>
+    <div class="table-wrap">
+      <table id="ticket-table">
+        <thead>
+          <tr>
+            <th>Ticket</th><th>Pri</th><th>Category</th><th>Location</th>
+            <th>Status</th><th>Owner</th><th>SLA due</th><th>Created</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-label="Bookings">
+    <h2>Bookings <span id="booking-count" class="count"></span></h2>
+    <div class="table-wrap">
+      <table id="booking-table">
+        <thead>
+          <tr>
+            <th>Booking</th><th>Facility</th><th>Date</th><th>Slot</th>
+            <th>Requester</th><th>Pass code</th><th>Status</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="two-col">
+    <section aria-label="Audit feed">
+      <h2>Agent activity</h2>
+      <ol id="audit-feed" class="feed"></ol>
+    </section>
+    <section aria-label="Slot availability">
+      <h2>Slot availability</h2>
+      <div class="slot-controls">
+        <label>Facility
+          <select id="slot-facility">
+            <option>study room</option>
+            <option>seminar room</option>
+            <option>sports hall</option>
+          </select>
+        </label>
+        <label>Date
+          <input id="slot-date" type="date">
+        </label>
+      </div>
+      <ul id="slot-list" class="slots"></ul>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <p>Read-only view. All actions happen through the voice agent. Refreshes every 2.5&thinsp;s.</p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
