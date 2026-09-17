@@ -4,8 +4,9 @@
 Run:  python backend/seed.py
 
 Slots are generated for today plus the next 6 days so the demo always has
-availability. Two historical tickets (H-1001, H-1002) and one booking (S-01)
-are fixed, so new tickets start at H-1003 and bookings at S-02.
+availability. Two historical tickets (H-1001, H-1002) are fixed, so new
+tickets start at H-1003. No bookings are seeded: every booking on the
+dashboard is a real transaction, and the first booking of a demo is S-01.
 """
 
 import sys
@@ -35,18 +36,15 @@ def seed() -> None:
         "INSERT INTO users (name, block, phone) VALUES (?, ?, ?)",
         [("Aarav", "Block B", ""), ("Priya", "Block C", ""),
          ("Rahul", "Block A", ""), ("Warden", "Office", "")])
-    # One booking lives on tomorrow's first study-room slot.
-    booked_date = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+    # All slots start free. Nothing here looks like a real transaction:
+    # bookings only ever come from the voice agent or API callers.
     for day in range(7):
         date = (today + timedelta(days=day)).strftime("%Y-%m-%d")
         for facility in FACILITIES:
             for slot in DAILY_SLOTS:
-                taken = (facility == "study room" and date == booked_date
-                         and slot == DAILY_SLOTS[0])
                 conn.execute(
                     "INSERT INTO slots (facility, date, slot, is_booked)"
-                    " VALUES (?, ?, ?, ?)", (facility, date, slot,
-                                             1 if taken else 0))
+                    " VALUES (?, ?, ?, 0)", (facility, date, slot))
     conn.execute(
         "INSERT INTO tickets (ticket_id, reporter, category, location,"
         " description, priority, status, owner, created_at, updated_at,"
@@ -61,17 +59,10 @@ def seed() -> None:
         " 'Block A corridor', 'Stained wall near lift', 'P3',"
         " 'resolved', ?, ?, ?, ?)",
         (OWNERS["cleaning"], now, now, sla_due("P3", now)))
-    conn.execute(
-        "INSERT INTO bookings (booking_id, facility, date, slot,"
-        " requester, pass_code, status, created_at)"
-        " VALUES ('S-01', 'study room', ?, ?, 'Priya', 'A1B2',"
-        " 'confirmed', ?)", (booked_date, DAILY_SLOTS[0], now))
     audit(conn, "seed", "create_ticket", "H-1001",
           "historical: network P2 at Block C Room 301")
     audit(conn, "seed", "create_ticket", "H-1002",
           "historical: cleaning P3 at Block A corridor")
-    audit(conn, "seed", "book_facility", "S-01",
-          f"study room {booked_date} {DAILY_SLOTS[0]}")
     conn.commit()
     counts = {t: conn.execute(f"SELECT COUNT(*) AS n FROM {t}").fetchone()["n"]
               for t in ("tickets", "bookings", "slots", "audit_log",

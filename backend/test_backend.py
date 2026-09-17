@@ -102,9 +102,9 @@ def main() -> int:
         check("seed ticket H-1001", s == 200
               and seeded["ticket"]["status"] == "in_progress")
         s, b = call("GET", "/slots?facility=study room&date=" + TOMORROW)
-        check("seed booking blocks one slot", s == 200
-              and b["available_slots"] == ["11:00-12:00", "17:00-18:00",
-                                           "19:00-20:00"],
+        check("seed leaves all slots free", s == 200
+              and b["available_slots"] == ["09:00-10:00", "11:00-12:00",
+                                           "17:00-18:00", "19:00-20:00"],
               json.dumps(b))
 
         # 1. create_ticket (P1)
@@ -129,7 +129,7 @@ def main() -> int:
 
         # 3. list_slots
         s, slots = call("GET", "/slots?facility=study room&date=" + TOMORROW)
-        check("list_slots", s == 200 and len(slots["available_slots"]) == 3,
+        check("list_slots", s == 200 and len(slots["available_slots"]) == 4,
               json.dumps(slots))
 
         # 4. book_facility
@@ -138,7 +138,7 @@ def main() -> int:
             "facility": "study room", "date": TOMORROW, "slot": pick,
             "requester": "Aarav"})
         bk = booked.get("booking", {})
-        check("book_facility", s == 200 and bk.get("booking_id") == "S-02"
+        check("book_facility", s == 200 and bk.get("booking_id") == "S-01"
               and bk.get("status") == "confirmed"
               and len(bk.get("pass_code", "")) == 4, json.dumps(booked))
 
@@ -307,7 +307,7 @@ def main() -> int:
         # 9. audit log, per action
         conn = sqlite3.connect(tmp.name)
         tools = [r[0] for r in conn.execute(
-            "SELECT tool FROM audit_log WHERE ref_id IN ('H-1003', 'S-02')"
+            "SELECT tool FROM audit_log WHERE ref_id IN ('H-1003', 'S-01')"
             " ORDER BY id")]
         conn.close()
         check("audit log rows", tools == ["create_ticket", "book_facility",
@@ -494,14 +494,13 @@ def main() -> int:
         n_t = conn.execute("SELECT COUNT(*) FROM tickets").fetchone()[0]
         ids = [r[0] for r in conn.execute(
             "SELECT ticket_id FROM tickets ORDER BY ticket_id")]
-        has_s01 = conn.execute(
-            "SELECT COUNT(*) FROM bookings WHERE booking_id = 'S-01'"
-            ).fetchone()[0]
+        n_b = conn.execute("SELECT COUNT(*) FROM bookings").fetchone()[0]
         n_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         conn.close()
         check("seed reset deterministic",
-              n_t == 2 and ids == ["H-1001", "H-1002"] and has_s01 == 1
-              and n_users == 4, f"tickets={ids} users={n_users}")
+              n_t == 2 and ids == ["H-1001", "H-1002"] and n_b == 0
+              and n_users == 4,
+              f"tickets={ids} bookings={n_b} users={n_users}")
     finally:
         server.terminate()
         try:
